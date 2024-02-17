@@ -10,6 +10,10 @@ contract CosmicWallet {
 
     /* State variables */
     address public immutable owner;
+    mapping(address => mapping(address => uint)) public erc20Allowance;
+    mapping(address => mapping(address => mapping(uint => bool)))
+        public erc721Allowance;
+    mapping(address => mapping(address => bool)) public erc721AllowanceForAll;
 
     /* Events */
     event EthReceived(address indexed sender, uint amount, uint timestamp);
@@ -75,9 +79,11 @@ contract CosmicWallet {
         address withdrawer = msg.sender;
         if (withdrawer != owner) {
             require(
-                IERC20(_token).allowance(address(this), withdrawer) >= _amount,
+                // IERC20(_token).allowance(address(this), withdrawer) >= _amount,
+                erc20Allowance[_token][withdrawer] >= _amount,
                 "CosmicWallet: Insufficient allowance"
             );
+            erc20Allowance[_token][withdrawer] -= _amount;
         }
         IERC20(_token).safeTransfer(_recepient, _amount);
 
@@ -90,7 +96,16 @@ contract CosmicWallet {
         );
     }
 
-    function approveForERC20Token(
+    function internalAproveForERC20Token(
+        address _token,
+        address _spender,
+        uint _amount
+    ) external onlyOwner {
+        erc20Allowance[_token][_spender] = _amount;
+    }
+
+    // Approval for external contracts that need direct communication with the wallet
+    function externalApproveForERC20Token(
         address _token,
         address _spender,
         uint _amount
@@ -110,16 +125,20 @@ contract CosmicWallet {
         );
 
         address withdrawer = msg.sender;
-        // Check if the withdrawer is either the owner or has been approved for this specific token
         if (withdrawer != owner) {
-            require(
-                IERC721(_token).getApproved(_tokenId) == withdrawer ||
-                    IERC721(_token).isApprovedForAll(address(this), withdrawer),
-                "CosmicWallet: Withdrawer not approved"
-            );
+            if (erc721Allowance[_token][withdrawer][_tokenId]) {
+                erc721Allowance[_token][withdrawer][_tokenId] = false;
+            } else {
+                require(
+                    erc721AllowanceForAll[_token][withdrawer],
+                    "CosmicWallet: Insufficient allowance"
+                );
+            }
         }
-
         IERC721(_token).safeTransferFrom(address(this), _recipient, _tokenId);
+        if (IERC721(_token).balanceOf(address(this)) == 0) {
+            erc721AllowanceForAll[_token][withdrawer] = false;
+        }
 
         emit ERC721Withdraw(
             _token,
@@ -130,7 +149,25 @@ contract CosmicWallet {
         );
     }
 
-    function aproveForERC721Token(
+    function internalAproveForERC721Token(
+        address _token,
+        address _spender,
+        uint _tokenId,
+        bool _approval
+    ) external onlyOwner {
+        erc721Allowance[_token][_spender][_tokenId] = _approval;
+    }
+
+    function internalAproveForAllERC721Token(
+        address _token,
+        address _spender,
+        bool _approval
+    ) external onlyOwner {
+        erc721AllowanceForAll[_token][_spender] = _approval;
+    }
+
+    // Approval for external contracts that need direct communication with the wallet
+    function externalAproveForERC721Token(
         address _token,
         address _spender,
         uint _tokenId
@@ -138,7 +175,7 @@ contract CosmicWallet {
         IERC721(_token).approve(_spender, _tokenId);
     }
 
-    function aproveForAllERC721Token(
+    function externalAproveForAllERC721Token(
         address _token,
         address _spender,
         bool _approved
