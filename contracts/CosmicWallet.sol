@@ -5,11 +5,19 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
+interface IFeeValueStorage {
+    function feeRate() external view returns (uint);
+}
+
 contract CosmicWallet {
     using SafeERC20 for IERC20;
 
+    uint public constant MAX_FEE_RATE = 1e4;
+
     /* State variables */
     address public immutable owner;
+    address public immutable feeValueStorage;
+    address public feeReceiver;
     mapping(address => mapping(address => uint)) public erc20Allowance;
     mapping(address => mapping(address => mapping(uint => bool)))
         public erc721Allowance;
@@ -35,12 +43,24 @@ contract CosmicWallet {
 
     /* Modifiers */
     modifier onlyOwner() {
-        require(msg.sender == owner, "You are not the owner!");
+        require(msg.sender == owner, "You are not the owner");
         _;
     }
 
-    constructor(address _owner) {
+    constructor(
+        address _owner,
+        address _feeValueStorage,
+        address _feeReceiver
+    ) {
+        require(_feeReceiver != address(0), "CosmicWallet: Address Zero");
+
         owner = _owner;
+        feeValueStorage = _feeValueStorage;
+        feeReceiver = _feeReceiver;
+    }
+
+    function setFeeReceiver(address _newFeeReceiver) external onlyOwner {
+        feeReceiver = _newFeeReceiver;
     }
 
     // Ether Management
@@ -59,7 +79,14 @@ contract CosmicWallet {
     }
 
     receive() external payable {
-        emit EthReceived(msg.sender, msg.value, block.timestamp);
+        uint feeRate = IFeeValueStorage(feeValueStorage).feeRate();
+        uint amount = msg.value;
+        uint fee = amount * (feeRate / MAX_FEE_RATE);
+        if (fee > 0) {
+            (bool success, ) = feeReceiver.call{value: fee}("");
+            require(success, "CosmicWallet: Ether transfer failed");
+        }
+        emit EthReceived(msg.sender, amount, block.timestamp);
     }
 
     // --- ERC20 Tokens Support ---
